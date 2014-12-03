@@ -1,0 +1,4 @@
+name: Tahiti
+main: nz.co.noirland.tahiti.Tahiti
+version: ${version}
+author: ZephireNZ
