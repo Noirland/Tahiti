@@ -1,18 +1,20 @@
 package nz.co.noirland.tahiti;
 
 import com.google.common.collect.Iterables;
-import net.md_5.bungee.api.ChatColor;
+import net.md_5.bungee.api.*;
 import net.md_5.bungee.api.chat.BaseComponent;
-import net.md_5.bungee.api.chat.TextComponent;
+import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.config.ListenerInfo;
 import net.md_5.bungee.api.config.ServerInfo;
+import net.md_5.bungee.api.connection.ProxiedPlayer;
+import net.md_5.bungee.api.event.ProxyPingEvent;
+import net.md_5.bungee.api.event.ServerConnectedEvent;
 import net.md_5.bungee.api.event.ServerKickEvent;
 import net.md_5.bungee.api.plugin.Listener;
 import net.md_5.bungee.api.plugin.Plugin;
-import net.md_5.bungee.api.scheduler.ScheduledTask;
 import net.md_5.bungee.event.EventHandler;
 
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class Tahiti extends Plugin implements Listener {
 
@@ -20,15 +22,16 @@ public class Tahiti extends Plugin implements Listener {
 
     private ServerInfo defaultServer;
     private ServerInfo fallbackServer;
+    private boolean forced = false;
 
-    private static ScheduledTask checkTask;
-
-    public static BaseComponent RECONNECT_MESSAGE;
-
-    static {
-        RECONNECT_MESSAGE = new TextComponent("You have been reconnected to the main server.");
-        RECONNECT_MESSAGE.setColor(ChatColor.RED);
-    }
+    public static final BaseComponent[] TITLE = new ComponentBuilder("WELCOME TO TAHITI")
+            .color(ChatColor.GOLD)
+            .bold(true)
+            .create();
+    public static final BaseComponent[] SUBTITLE = new ComponentBuilder("You'll be automatically sent back when Noirland's up")
+            .color(ChatColor.DARK_RED)
+            .italic(true)
+            .create();
 
     public static Tahiti inst() {
         return inst;
@@ -46,25 +49,43 @@ public class Tahiti extends Plugin implements Listener {
         defaultServer = getProxy().getServerInfo(info.getDefaultServer());
         fallbackServer = getProxy().getServerInfo(info.getFallbackServer());
 
-        checkTask = getProxy().getScheduler().schedule(this, new ServerCheckTask(), 0, 1, TimeUnit.MINUTES);
+        getProxy().getScheduler().schedule(this, new ServerCheckTask(), 0, 10, TimeUnit.SECONDS);
         getProxy().getPluginManager().registerListener(this, this);
+        getProxy().getPluginManager().registerCommand(this, new TahitiCommand());
     }
 
-    @Override
-    public void onDisable() {
-        checkTask.cancel();
+    @EventHandler
+    public void onPing(ProxyPingEvent event) {
+        ServerPing response = event.getResponse();
+        if (getPing(getDefaultServer()) == null || forced) {
+            response.setDescription(getFallbackServer().getMotd());
+        }
     }
 
     @EventHandler
     public void onKick(ServerKickEvent event) {
-        ServerInfo from = event.getKickedFrom();
-
-        if(from != getDefaultServer()) return;
         String kickReason = BaseComponent.toPlainText(event.getKickReasonComponent());
-        if(!kickReason.contains("[SHUTDOWN]")) return;
+        if(!kickReason.contains("[TAHITI]")) return;
 
         event.setCancelled(true);
         event.setCancelServer(getFallbackServer());
+    }
+
+    @EventHandler
+    public void onJoin(ServerConnectedEvent event) {
+        if(event.getServer().getInfo() != getFallbackServer()) return;
+
+        getProxy().createTitle().stay(200).title(TITLE).subTitle(SUBTITLE).send(event.getPlayer());
+    }
+
+    public boolean toggleForce() {
+        forced = !forced;
+
+        return forced;
+    }
+
+    public boolean isForced() {
+        return forced;
     }
 
     public ServerInfo getDefaultServer() {
@@ -73,5 +94,30 @@ public class Tahiti extends Plugin implements Listener {
 
     public ServerInfo getFallbackServer() {
         return fallbackServer;
+    }
+
+    public static ServerPing getPing(ServerInfo info) {
+        final Exchanger<ServerPing> ex = new Exchanger<>();
+
+        info.ping(new Callback<ServerPing>() {
+            @Override
+            public void done(ServerPing result, Throwable error) {
+                try {
+                    ex.exchange(result);
+                } catch (InterruptedException e) { }
+            }
+        });
+
+        try {
+            return ex.exchange(null);
+        } catch (InterruptedException e) {
+            return null;
+        }
+    }
+
+    public static void move(ServerInfo from, ServerInfo to) {
+        for(final ProxiedPlayer player : from.getPlayers()) {
+            player.connect(to);
+        }
     }
 }
